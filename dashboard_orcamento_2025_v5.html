@@ -1880,6 +1880,13 @@ async function sincronizarGitHub(){
     const check = await fetch(GH_API, {
       headers: { Authorization: `token ${GH_TOKEN}`, Accept: 'application/vnd.github.v3+json' }
     });
+    if(check.status === 401){
+      localStorage.removeItem(TK_KEY);
+      toast('⚠️ Token inválido! Clique em Sincronizar novamente para inserir o token correto.');
+      statusEl.innerHTML = '⚠️ Token inválido — clique Sincronizar novamente';
+      statusEl.style.color = '#FCD34D';
+      return;
+    }
     if(check.ok){ const j = await check.json(); sha = j.sha; }
 
     const body = {
