@@ -1952,25 +1952,46 @@ async function carregarDoGitHub(){
   initMSel(); initPills(); rResumo();
 
   const statusEl = document.getElementById('syncStatus');
-  statusEl.innerHTML = '🔄 Carregando dados...';
-  statusEl.style.color = 'rgba(255,255,255,.7)';
 
-  // 2. Tenta carregar dados salvos no GitHub
-  const ok = await carregarDoGitHub();
-  if(ok){
-    const agora = new Date().toLocaleTimeString('pt-BR');
-    statusEl.innerHTML = `✅ Dados do GitHub · ${agora}`;
-    statusEl.style.color = 'rgba(255,255,255,.8)';
-    document.getElementById('hdrSub').textContent =
-      ML.map((_,m)=>m).filter(hasDados).length + ' meses com dados · Sincronizado';
-    rResumo(); initPills();
-  } else {
-    const ultimoUpload = localStorage.getItem(SK+'_upload');
-    statusEl.innerHTML = ultimoUpload ? `📂 ${ultimoUpload}` : '📤 Carregue sua planilha';
+  // 2. Se tem token salvo, sincroniza automaticamente ao abrir
+  const tk = localStorage.getItem(TK_KEY);
+  if(tk){
+    statusEl.innerHTML = '🔄 Atualizando dados...';
     statusEl.style.color = 'rgba(255,255,255,.7)';
-    document.getElementById('hdrSub').textContent =
-      ML.map((_,m)=>m).filter(hasDados).length + ' meses com dados' +
-      (ultimoUpload ? ' · ' + ultimoUpload : '');
+    try {
+      await sincronizarGitHub();
+    } catch(e) {
+      // Se falhar, carrega do GitHub normalmente
+      const ok = await carregarDoGitHub();
+      if(ok){
+        const agora = new Date().toLocaleTimeString('pt-BR');
+        statusEl.innerHTML = `✅ Dados do GitHub · ${agora}`;
+        statusEl.style.color = 'rgba(255,255,255,.8)';
+        document.getElementById('hdrSub').textContent =
+          ML.map((_,m)=>m).filter(hasDados).length + ' meses com dados · Sincronizado';
+        rResumo(); initPills();
+      }
+    }
+  } else {
+    // Sem token: carrega dados do GitHub (só leitura)
+    statusEl.innerHTML = '🔄 Carregando dados...';
+    statusEl.style.color = 'rgba(255,255,255,.7)';
+    const ok = await carregarDoGitHub();
+    if(ok){
+      const agora = new Date().toLocaleTimeString('pt-BR');
+      statusEl.innerHTML = `✅ Dados do GitHub · ${agora}`;
+      statusEl.style.color = 'rgba(255,255,255,.8)';
+      document.getElementById('hdrSub').textContent =
+        ML.map((_,m)=>m).filter(hasDados).length + ' meses com dados · Sincronizado';
+      rResumo(); initPills();
+    } else {
+      const ultimoUpload = localStorage.getItem(SK+'_upload');
+      statusEl.innerHTML = ultimoUpload ? `📂 ${ultimoUpload}` : '📤 Carregue sua planilha';
+      statusEl.style.color = 'rgba(255,255,255,.7)';
+      document.getElementById('hdrSub').textContent =
+        ML.map((_,m)=>m).filter(hasDados).length + ' meses com dados' +
+        (ultimoUpload ? ' · ' + ultimoUpload : '');
+    }
   }
 })();
 </script>
