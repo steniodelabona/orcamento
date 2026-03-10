@@ -1819,7 +1819,7 @@ function loadSaved(){
 const GH_REPO  = 'steniodelabona/orcamento';
 const GH_FILE  = 'dados.json';
 const GH_API   = `https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`;
-const APPS_URL = 'https://script.google.com/macros/s/AKfycbyFLGzJfD8HhRuWvXZTunlZSN0atRhIa4gOep8oS7ruB_9FgOioqkpyJ0HKKRVpgmy4/exec';
+const SHEETS_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=Dashboard`;
 const TK_KEY   = 'gh_token_orcamento';
 
 function getToken(){
@@ -1831,96 +1831,64 @@ function getToken(){
   return tk ? tk.trim() : null;
 }
 
-async function sincronizarGitHub(){
+async function carregarDoSheets(){
   const statusEl = document.getElementById('syncStatus');
-  statusEl.innerHTML = '🔄 Buscando dados do Sheets...';
-  statusEl.style.color = 'rgba(255,255,255,.8)';
-
   try {
-    // 1. Buscar dados do Google Sheets via Apps Script
-    const resp = await fetch(APPS_URL);
-    if(!resp.ok) throw new Error('Não foi possível conectar ao Google Sheets');
-    const json = await resp.json();
-    if(!json.ok) throw new Error(json.error || 'Erro no Apps Script');
-    if(!json.itens?.length) throw new Error('Nenhum dado retornado do Sheets');
+    statusEl.innerHTML = '🔄 Buscando dados do Sheets...';
+    statusEl.style.color = 'rgba(255,255,255,.8)';
 
-    // 2. Parsear dados
-    function parseNum(v) {
-      if (v === '' || v === null || v === undefined) return 0;
-      if (typeof v === 'number') return v;
-      let s = String(v).replace(/R\$\s*/g,'').trim();
-      if (!s || s === '-') return 0;
-      if (/\d\.\d{3}/.test(s) || (s.includes(',') && !s.match(/,\d{3}/))) {
-        s = s.replace(/\./g,'').replace(',','.');
-      } else { s = s.replace(/,/g,''); }
-      return parseFloat(s) || 0;
-    }
+    const resp = await fetch(SHEETS_URL);
+    if(!resp.ok) throw new Error('Não foi possível acessar a planilha');
+    const text = await resp.text();
+
+    // Google retorna JSON com prefixo: /*O_o*/\ngoogle.visualization.Query.setResponse({...})
+    const jsonStr = text.replace(/^[^(]+\(/, '').replace(/\);?\s*$/, '');
+    const data = JSON.parse(jsonStr);
+    const rows = data.table.rows;
+    const cols = data.table.cols;
 
     const obsAnt = D.obs || {};
     const tiposAnt = D.tipos || {};
-    D = {
+    const newD = {
       receitas:{}, despesas_basicas:{}, despesas_empresa:{},
       despesas_casa:{}, despesas_pessoal:{}, cartoes:{}, extras:{},
       obs: obsAnt, tipos: tiposAnt
     };
 
-    for(const {cat, item, tipo, vals} of json.itens){
-      if(!D[cat]) continue;
-      D[cat][item] = (vals||[]).map(v => parseNum(v));
-      D.tipos[item] = tipo || tiposAnt[item] || 'consumo';
+    for(const row of rows){
+      const c = row.c;
+      const cat  = c[0]?.v ? String(c[0].v).trim() : '';
+      const item = c[1]?.v ? String(c[1].v).trim() : '';
+      const tipo = c[2]?.v ? String(c[2].v).trim() : 'consumo';
+      if(!cat || !item || !newD[cat]) continue;
+      const vals = [];
+      for(let i = 3; i <= 14; i++){
+        const v = c[i]?.v;
+        vals.push(v === null || v === undefined ? 0 : Number(v) || 0);
+      }
+      newD[cat][item] = vals;
+      newD.tipos[item] = tipo || tiposAnt[item] || 'consumo';
     }
 
-    statusEl.innerHTML = '🔄 Salvando no GitHub...';
-
-    // 3. Salvar no GitHub
-    const GH_TOKEN = getToken();
-    if(!GH_TOKEN){ toast('⚠️ Token não informado'); return; }
-
-    let sha = null;
-    const check = await fetch(GH_API, {
-      headers: { Authorization: `token ${GH_TOKEN}`, Accept: 'application/vnd.github.v3+json' }
-    });
-    if(check.status === 401){
-      localStorage.removeItem(TK_KEY);
-      toast('⚠️ Token inválido! Clique em Sincronizar novamente para inserir o token correto.');
-      statusEl.innerHTML = '⚠️ Token inválido — clique Sincronizar novamente';
-      statusEl.style.color = '#FCD34D';
-      return;
-    }
-    if(check.ok){ const j = await check.json(); sha = j.sha; }
-
-    const body = {
-      message: `Sync Sheets — ${new Date().toLocaleString('pt-BR')}`,
-      content: btoa(unescape(encodeURIComponent(JSON.stringify(D, null, 2)))),
-      ...(sha ? {sha} : {})
-    };
-    const save = await fetch(GH_API, {
-      method: 'PUT',
-      headers: {
-        Authorization: `token ${GH_TOKEN}`,
-        Accept: 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    });
-    if(!save.ok){ const err = await save.json(); throw new Error(err.message || 'Erro ao salvar no GitHub'); }
-
-    // 4. Atualizar cache e tela
+    D = newD;
     localStorage.setItem(SK, JSON.stringify(D));
     const agora = new Date().toLocaleTimeString('pt-BR');
-    statusEl.innerHTML = `✅ Sincronizado às ${agora} · ${json.itens.length} itens`;
+    statusEl.innerHTML = `✅ Sheets ${agora}`;
     statusEl.style.color = 'rgba(255,255,255,.95)';
     document.getElementById('hdrSub').textContent =
-      ML.map((_,m)=>m).filter(hasDados).length + ' meses com dados · Sheets ' + agora;
-    toast(`✅ ${json.itens.length} itens sincronizados do Google Sheets!`);
+      ML.map((_,m)=>m).filter(hasDados).length + ' meses com dados · Atualizado ' + agora;
     rResumo(); initPills();
-
+    return true;
   } catch(e) {
     console.error(e);
     statusEl.innerHTML = `⚠️ ${e.message}`;
     statusEl.style.color = '#FCD34D';
-    toast('⚠️ ' + e.message);
+    return false;
   }
+}
+
+async function sincronizarGitHub(){
+  await carregarDoSheets();
 }
 
 async function carregarDoGitHub(){
@@ -1951,48 +1919,8 @@ async function carregarDoGitHub(){
   }
   initMSel(); initPills(); rResumo();
 
-  const statusEl = document.getElementById('syncStatus');
-
-  // 2. Se tem token salvo, sincroniza automaticamente ao abrir
-  const tk = localStorage.getItem(TK_KEY);
-  if(tk){
-    statusEl.innerHTML = '🔄 Atualizando dados...';
-    statusEl.style.color = 'rgba(255,255,255,.7)';
-    try {
-      await sincronizarGitHub();
-    } catch(e) {
-      // Se falhar, carrega do GitHub normalmente
-      const ok = await carregarDoGitHub();
-      if(ok){
-        const agora = new Date().toLocaleTimeString('pt-BR');
-        statusEl.innerHTML = `✅ Dados do GitHub · ${agora}`;
-        statusEl.style.color = 'rgba(255,255,255,.8)';
-        document.getElementById('hdrSub').textContent =
-          ML.map((_,m)=>m).filter(hasDados).length + ' meses com dados · Sincronizado';
-        rResumo(); initPills();
-      }
-    }
-  } else {
-    // Sem token: carrega dados do GitHub (só leitura)
-    statusEl.innerHTML = '🔄 Carregando dados...';
-    statusEl.style.color = 'rgba(255,255,255,.7)';
-    const ok = await carregarDoGitHub();
-    if(ok){
-      const agora = new Date().toLocaleTimeString('pt-BR');
-      statusEl.innerHTML = `✅ Dados do GitHub · ${agora}`;
-      statusEl.style.color = 'rgba(255,255,255,.8)';
-      document.getElementById('hdrSub').textContent =
-        ML.map((_,m)=>m).filter(hasDados).length + ' meses com dados · Sincronizado';
-      rResumo(); initPills();
-    } else {
-      const ultimoUpload = localStorage.getItem(SK+'_upload');
-      statusEl.innerHTML = ultimoUpload ? `📂 ${ultimoUpload}` : '📤 Carregue sua planilha';
-      statusEl.style.color = 'rgba(255,255,255,.7)';
-      document.getElementById('hdrSub').textContent =
-        ML.map((_,m)=>m).filter(hasDados).length + ' meses com dados' +
-        (ultimoUpload ? ' · ' + ultimoUpload : '');
-    }
-  }
+  // 2. Sempre busca dados frescos do Sheets ao abrir
+  await carregarDoSheets();
 })();
 </script>
 </body>
